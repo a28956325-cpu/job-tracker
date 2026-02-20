@@ -191,10 +191,11 @@ function backfillFromGmail() {
     }
   }
 
-  // Determine cutoff date from Settings sheet or default to 1 year ago
-  var afterFilter = ' after:' + _getBackfillCutoffDate(ss);
+  // Fix: Handle Date objects from Settings sheet properly
+  var cutoffDate = _getBackfillCutoffDate(ss);
+  var afterFilter = ' after:' + cutoffDate;
 
-  // Search Gmail for application confirmation emails — three broad query buckets
+  // Broad Gmail search queries (no subject: filter — search full email)
   var queries = [
     '("thank you for applying" OR "thank you for your application" OR "application received" OR "application submitted" OR "we received your application" OR "application confirmation")',
     '("successfully submitted" OR "thanks for applying" OR "your application to" OR "applied to" OR "application for the" OR "your application has been")',
@@ -203,6 +204,7 @@ function backfillFromGmail() {
 
   var processedMessageIds = {};
   var addedCount = 0;
+  var skippedCount = 0;
 
   for (var q = 0; q < queries.length; q++) {
     try {
@@ -211,9 +213,8 @@ function backfillFromGmail() {
 
       for (var t = 0; t < threads.length; t++) {
         var messages = threads[t].getMessages();
-        var msg = messages[0]; // first message in thread
+        var msg = messages[0];
 
-        // Skip if already processed
         var msgId = msg.getId();
         if (processedMessageIds[msgId]) continue;
         processedMessageIds[msgId] = true;
@@ -222,22 +223,54 @@ function backfillFromGmail() {
         var subject = msg.getSubject();
         var date = msg.getDate();
 
-        // Extract company name from sender
-        var company = _extractCompanyFromEmail(from, subject);
-        if (!company) continue;
+        // Get first 1000 chars of body for AI analysis
+        var body = "";
+        try {
+          body = msg.getPlainBody();
+          if (body && body.length > 1000) body = body.substring(0, 1000);
+        } catch (e) {
+          body = "";
+        }
 
-        // Skip if company already in sheet (normalized comparison)
+        // Use Gemini AI to classify the email
+        var classification = classifyEmailWithGemini(from, subject, body);
+
+        if (!classification) {
+          Logger.log("Gemini returned null for: " + subject);
+          skippedCount++;
+          continue;
+        }
+
+        if (!classification.is_job_application_email) {
+          Logger.log("Not a job email (AI): " + subject + " → " + JSON.stringify(classification));
+          skippedCount++;
+          continue;
+        }
+
+        if (classification.confidence < 0.7) {
+          Logger.log("Low confidence (" + classification.confidence + "): " + subject);
+          skippedCount++;
+          continue;
+        }
+
+        var company = classification.company;
+        var roleTitle = classification.role || "";
+        var status = classification.status || "Applied";
+
+        if (!company || company.length < 2) {
+          Logger.log("No company from AI: " + subject);
+          skippedCount++;
+          continue;
+        }
+
+        // Skip if company already in sheet
         var companyKey = _normalizeCompanyKey(company);
         if (existingCompanies[companyKey]) continue;
 
-        // Extract role title from subject if possible
-        var roleTitle = _extractRoleFromSubject(subject, company);
-        // Discard unfilled template variables (e.g. [m_legal_entity])
-        if (roleTitle && /\[[^\]]+\]/.test(roleTitle)) roleTitle = "";
+        // Validate status
+        var validStatuses = ["Applied", "Rejected", "Interview", "Assessment"];
+        if (validStatuses.indexOf(status) === -1) status = "Applied";
 
-        var status = "Applied";
-
-        // Create the row
         var appId = "gmail-" + Utilities.getUuid().substring(0, 8);
         var timestamp = Utilities.formatDate(date, Session.getScriptTimeZone(), "yyyy-MM-dd HH:mm:ss");
 
@@ -246,29 +279,100 @@ function backfillFromGmail() {
           timestamp,
           company,
           roleTitle || "Unknown Role",
-          "", // jd_url
-          "Gmail Backfill", // source
-          "", // resume_version
+          "",
+          "Gmail Backfill",
+          "",
           status,
-          "Auto-discovered from Gmail on " + Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd"),
+          "AI-classified from Gmail on " + Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd"),
         ]);
 
         existingCompanies[companyKey] = true;
         addedCount++;
 
-        Utilities.sleep(100);
+        // Rate limit: Gemini free tier is 15 req/min for Flash
+        Utilities.sleep(4500);
       }
     } catch (err) {
       Logger.log("Backfill search error: " + err.message);
     }
   }
 
-  // Run status sync on the newly added rows to update statuses
   if (addedCount > 0) {
     syncStatusFromGmail();
   }
 
-  SpreadsheetApp.getUi().alert("Backfill complete! Added " + addedCount + " applications from Gmail. Running status sync...");
+  SpreadsheetApp.getUi().alert(
+    "AI Backfill complete!\n\n" +
+    "Added: " + addedCount + " applications\n" +
+    "Skipped: " + skippedCount + " non-job emails\n\n" +
+    "Running status sync..."
+  );
+}
+
+// ---------------------------------------------------------------------------
+// testBackfillDryRun — search Gmail and classify with AI, log only (no writes)
+// ---------------------------------------------------------------------------
+function testBackfillDryRun() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var cutoffDate = _getBackfillCutoffDate(ss);
+  var afterFilter = ' after:' + cutoffDate;
+
+  var queries = [
+    '("thank you for applying" OR "thank you for your application" OR "application received") ' + afterFilter,
+    '("successfully submitted" OR "thanks for applying" OR "your application to") ' + afterFilter,
+    '("thank you for your interest" OR "we have received your application" OR "you\'re in the mix") ' + afterFilter,
+  ];
+
+  var processedMessageIds = {};
+  var results = [];
+
+  for (var q = 0; q < queries.length; q++) {
+    try {
+      var threads = GmailApp.search(queries[q], 0, 50);
+      for (var t = 0; t < threads.length; t++) {
+        var msg = threads[t].getMessages()[0];
+        var msgId = msg.getId();
+        if (processedMessageIds[msgId]) continue;
+        processedMessageIds[msgId] = true;
+
+        var from = msg.getFrom();
+        var subject = msg.getSubject();
+        var body = "";
+        try {
+          body = msg.getPlainBody();
+          if (body && body.length > 1000) body = body.substring(0, 1000);
+        } catch (e) {}
+
+        var classification = classifyEmailWithGemini(from, subject, body);
+
+        Logger.log("---");
+        Logger.log("From: " + from);
+        Logger.log("Subject: " + subject);
+        Logger.log("AI Result: " + JSON.stringify(classification));
+
+        if (classification && classification.is_job_application_email) {
+          results.push({
+            company: classification.company,
+            role: classification.role,
+            status: classification.status,
+            confidence: classification.confidence
+          });
+        }
+
+        Utilities.sleep(4500); // Rate limit
+      }
+    } catch (e) {
+      Logger.log("Search error: " + e.message);
+    }
+  }
+
+  Logger.log("=== DRY RUN SUMMARY ===");
+  Logger.log("Total job emails found: " + results.length);
+  for (var i = 0; i < results.length; i++) {
+    Logger.log((i + 1) + ". " + results[i].company + " | " + results[i].role + " | " + results[i].status + " | conf:" + results[i].confidence);
+  }
+
+  SpreadsheetApp.getUi().alert("Dry run complete! Found " + results.length + " job application emails. Check Execution Log for details.");
 }
 
 // Return the cutoff date string (yyyy/M/d) for Gmail search.
@@ -280,7 +384,16 @@ function _getBackfillCutoffDate(ss) {
       var rows = settingsSheet.getRange(2, 1, settingsSheet.getLastRow() - 1, 2).getValues();
       for (var i = 0; i < rows.length; i++) {
         if (String(rows[i][0]).toLowerCase() === "gmail_cutoff_date" && rows[i][1]) {
-          return String(rows[i][1]);
+          var val = rows[i][1];
+          // Handle Date objects from Google Sheets
+          if (val instanceof Date) {
+            return val.getFullYear() + "/" + (val.getMonth() + 1) + "/" + val.getDate();
+          }
+          // Handle string values — ensure yyyy/MM/dd format
+          var str = String(val);
+          // Convert yyyy-MM-dd to yyyy/MM/dd
+          str = str.replace(/-/g, "/");
+          return str;
         }
       }
     }
