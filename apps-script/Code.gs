@@ -20,9 +20,14 @@ var COL = {
 };
 
 // ---------------------------------------------------------------------------
-// doGet — test connection endpoint
+// doGet — test connection endpoint or get settings
 // ---------------------------------------------------------------------------
 function doGet(e) {
+  var params = e && e.parameter ? e.parameter : {};
+  if (params.action === "getSettings") {
+    var settings = _readAllSettings();
+    return jsonResponse({ ok: true, settings: settings });
+  }
   return ContentService
     .createTextOutput(JSON.stringify({ ok: true, message: "Job Tracker Apps Script is running." }))
     .setMimeType(ContentService.MimeType.JSON);
@@ -34,13 +39,27 @@ function doGet(e) {
 function doPost(e) {
   try {
     var data = JSON.parse(e.postData.contents);
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+
+    // Handle settings updates
+    if (data.action === "saveSettings") {
+      var settingsSheet = ss.getSheetByName("Settings");
+      if (!settingsSheet) return jsonResponse({ ok: false, error: "Settings sheet not found" });
+      var allowedKeys = ["gmail_cutoff_date", "tracking_active", "ghosted_days"];
+      for (var k = 0; k < allowedKeys.length; k++) {
+        var key = allowedKeys[k];
+        if (data[key] !== undefined) {
+          _updateSettingRow(settingsSheet, key, String(data[key]));
+        }
+      }
+      return jsonResponse({ ok: true });
+    }
 
     // Validate required fields
     if (!data.canonical_key && !data.jd_url) {
       return jsonResponse({ ok: false, error: "Missing canonical_key or jd_url" });
     }
 
-    var ss = SpreadsheetApp.getActiveSpreadsheet();
     var sheet = ss.getSheetByName(SHEET_NAME);
     if (!sheet) {
       sheet = ss.insertSheet(SHEET_NAME);
@@ -126,4 +145,38 @@ function jsonResponse(obj) {
   return ContentService
     .createTextOutput(JSON.stringify(obj))
     .setMimeType(ContentService.MimeType.JSON);
+}
+
+// ---------------------------------------------------------------------------
+// _readAllSettings — read Settings sheet into a plain object
+// ---------------------------------------------------------------------------
+function _readAllSettings() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var settingsSheet = ss.getSheetByName("Settings");
+  var result = {};
+  if (!settingsSheet || settingsSheet.getLastRow() < 2) return result;
+  var rows = settingsSheet.getRange(2, 1, settingsSheet.getLastRow() - 1, 2).getValues();
+  for (var i = 0; i < rows.length; i++) {
+    var key = String(rows[i][0]).trim();
+    var val = String(rows[i][1]).trim();
+    if (key) result[key] = val;
+  }
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// _updateSettingRow — update or append a key/value in the Settings sheet
+// ---------------------------------------------------------------------------
+function _updateSettingRow(settingsSheet, key, value) {
+  var lastRow = settingsSheet.getLastRow();
+  if (lastRow >= 2) {
+    var keys = settingsSheet.getRange(2, 1, lastRow - 1, 1).getValues();
+    for (var i = 0; i < keys.length; i++) {
+      if (String(keys[i][0]).trim() === key) {
+        settingsSheet.getRange(i + 2, 2).setValue(value);
+        return;
+      }
+    }
+  }
+  settingsSheet.appendRow([key, value]);
 }

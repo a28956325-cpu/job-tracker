@@ -10,12 +10,18 @@ document.addEventListener("DOMContentLoaded", async () => {
   const openSettings = document.getElementById("openSettings");
 
   // Load stored data
-  chrome.storage.sync.get(["appsScriptUrl", "sheetUrl"], syncData => {
+  chrome.storage.sync.get(["appsScriptUrl", "sheetUrl", "trackingPaused"], syncData => {
     chrome.storage.local.get(["todayCount", "todayDate", "lastJob"], localData => {
       const today = new Date().toDateString();
 
-      // Connection status
-      if (syncData.appsScriptUrl) {
+      // Pause state
+      const pausedBanner = document.getElementById("pausedBanner");
+      const openSettingsPaused = document.getElementById("openSettingsPaused");
+      if (syncData.trackingPaused) {
+        pausedBanner.style.display = "";
+        statusDot.className = "dot dot-gray";
+        statusDot.title = "Tracking paused";
+      } else if (syncData.appsScriptUrl) {
         statusDot.className = "dot dot-green";
         statusDot.title = "Connected";
       } else {
@@ -54,6 +60,14 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   if (openSettings) {
     openSettings.addEventListener("click", e => {
+      e.preventDefault();
+      chrome.runtime.openOptionsPage();
+    });
+  }
+
+  const openSettingsPausedLink = document.getElementById("openSettingsPaused");
+  if (openSettingsPausedLink) {
+    openSettingsPausedLink.addEventListener("click", e => {
       e.preventDefault();
       chrome.runtime.openOptionsPage();
     });
