@@ -8,8 +8,25 @@ var STATUS_PRIORITY = ["Viewed", "Ghosted", "Applied", "Assessment", "Interview"
 // Terminal statuses — do not process further
 var TERMINAL_STATUSES = ["Rejected", "Offer", "Withdrawn"];
 
-// Generic email domains to skip when extracting company from sender address
-var GENERIC_EMAIL_DOMAINS = ["greenhouse.io", "lever.co", "smartrecruiters.com", "myworkdayjobs.com", "gmail.com", "outlook.com", "yahoo.com"];
+// ATS/recruiting platform domains — real company name must be extracted from sender display name or subject
+var ATS_DOMAINS = {
+  "greenhouse.io": true,
+  "greenhouse-mail.io": true,
+  "lever.co": true,
+  "ashbyhq.com": true,
+  "myworkdayjobs.com": true,
+  "workday.com": true,
+  "smartrecruiters.com": true,
+  "icims.com": true,
+  "jobvite.com": true,
+  "breezy.hr": true,
+  "jazz.co": true,
+  "recruitee.com": true,
+  "bamboohr.com": true,
+};
+
+// Domains to skip entirely — these are not job-application emails
+var SKIP_DOMAINS = ["12twenty.com", "handshake.com", "piazza.com", "canvas.com"];
 
 // ---------------------------------------------------------------------------
 // syncStatusFromGmail — runs every 12 hours via time trigger
@@ -170,14 +187,18 @@ function backfillFromGmail() {
   if (lastRow >= 2) {
     var data = sheet.getRange(2, COL.COMPANY, lastRow - 1, 1).getValues();
     for (var i = 0; i < data.length; i++) {
-      if (data[i][0]) existingCompanies[String(data[i][0]).toLowerCase().trim()] = true;
+      if (data[i][0]) existingCompanies[_normalizeCompanyKey(String(data[i][0]))] = true;
     }
   }
 
-  // Search Gmail for application confirmation emails
+  // Determine cutoff date from Settings sheet or default to 1 year ago
+  var afterFilter = ' after:' + _getBackfillCutoffDate(ss);
+
+  // Search Gmail for application confirmation emails — three broad query buckets
   var queries = [
-    'subject:("thank you for applying" OR "application received" OR "application submitted" OR "we received your application" OR "application confirmation" OR "successfully submitted" OR "thanks for applying" OR "your application" OR "application for")',
-    'subject:("thank you for your interest" OR "we have received" OR "application has been" OR "applied to" OR "position" OR "role")',
+    'subject:("thank you for applying" OR "application received" OR "application submitted" OR "we received your application" OR "application confirmation")',
+    'subject:("successfully submitted" OR "thanks for applying" OR "your application to" OR "applied to" OR "application for the")',
+    'subject:("thank you for your interest" OR "application has been received" OR "we have received your application")',
   ];
 
   var processedMessageIds = {};
@@ -185,7 +206,7 @@ function backfillFromGmail() {
 
   for (var q = 0; q < queries.length; q++) {
     try {
-      var fullQuery = queries[q] + ' after:2025/12/01';
+      var fullQuery = queries[q] + afterFilter;
       var threads = GmailApp.search(fullQuery, 0, 100);
 
       for (var t = 0; t < threads.length; t++) {
@@ -205,11 +226,14 @@ function backfillFromGmail() {
         var company = _extractCompanyFromEmail(from, subject);
         if (!company) continue;
 
-        // Skip if company already in sheet
-        if (existingCompanies[company.toLowerCase().trim()]) continue;
+        // Skip if company already in sheet (normalized comparison)
+        var companyKey = _normalizeCompanyKey(company);
+        if (existingCompanies[companyKey]) continue;
 
         // Extract role title from subject if possible
         var roleTitle = _extractRoleFromSubject(subject, company);
+        // Discard unfilled template variables (e.g. [m_legal_entity])
+        if (roleTitle && /\[[^\]]+\]/.test(roleTitle)) roleTitle = "";
 
         var status = "Applied";
 
@@ -229,7 +253,7 @@ function backfillFromGmail() {
           "Auto-discovered from Gmail on " + Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd"),
         ]);
 
-        existingCompanies[company.toLowerCase().trim()] = true;
+        existingCompanies[companyKey] = true;
         addedCount++;
 
         Utilities.sleep(100);
@@ -247,37 +271,98 @@ function backfillFromGmail() {
   SpreadsheetApp.getUi().alert("Backfill complete! Added " + addedCount + " applications from Gmail. Running status sync...");
 }
 
-function _extractCompanyFromEmail(from, subject) {
-  // Try to extract from email address domain
-  var emailMatch = from.match(/<([^>]+)>/);
-  var email = emailMatch ? emailMatch[1] : from;
-  var domain = email.split("@")[1] || "";
+// Return the cutoff date string (yyyy/M/d) for Gmail search.
+// Reads "gmail_cutoff_date" from the Settings sheet; defaults to 1 year ago.
+function _getBackfillCutoffDate(ss) {
+  try {
+    var settingsSheet = ss.getSheetByName("Settings");
+    if (settingsSheet && settingsSheet.getLastRow() >= 2) {
+      var rows = settingsSheet.getRange(2, 1, settingsSheet.getLastRow() - 1, 2).getValues();
+      for (var i = 0; i < rows.length; i++) {
+        if (String(rows[i][0]).toLowerCase() === "gmail_cutoff_date" && rows[i][1]) {
+          return String(rows[i][1]);
+        }
+      }
+    }
+  } catch (e) {}
+  var d = new Date();
+  d.setFullYear(d.getFullYear() - 1);
+  return d.getFullYear() + "/" + (d.getMonth() + 1) + "/" + d.getDate();
+}
 
-  // Skip generic domains
-  var isGeneric = false;
-  for (var i = 0; i < GENERIC_EMAIL_DOMAINS.length; i++) {
-    if (domain.indexOf(GENERIC_EMAIL_DOMAINS[i]) !== -1) {
-      isGeneric = true;
+// Normalize a company name for duplicate comparison (lowercase, strip legal suffixes).
+function _normalizeCompanyKey(name) {
+  return name.toLowerCase()
+    .replace(/,?\s*(inc\.?|llc\.?|ltd\.?|corp\.?|co\.?|gmbh|s\.a\.)$/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+// Strip trailing job-function words from a sender display name.
+function _stripJobSuffix(name) {
+  return name.replace(/\s*(careers|recruiting|talent|hr|jobs|hiring|team|no-?reply)\s*$/gi, "").trim();
+}
+
+function _extractCompanyFromEmail(from, subject) {
+  // Parse display name and email address
+  var nameMatch = from.match(/^"?([^"<]+)"?\s*</);
+  var emailMatch = from.match(/<([^>]+)>/);
+  var email = emailMatch ? emailMatch[1] : from.trim();
+  var domain = (email.split("@")[1] || "").toLowerCase();
+
+  // Skip domains that are never job-application senders
+  for (var i = 0; i < SKIP_DOMAINS.length; i++) {
+    if (domain === SKIP_DOMAINS[i] || domain.endsWith("." + SKIP_DOMAINS[i])) {
+      return null;
+    }
+  }
+
+  // Check whether the sender is an ATS platform
+  var isATS = false;
+  for (var atsDomain in ATS_DOMAINS) {
+    if (domain === atsDomain || domain.endsWith("." + atsDomain)) {
+      isATS = true;
       break;
     }
   }
 
-  if (!isGeneric && domain) {
-    // Extract company from domain: "careers.dell.com" → "dell" → "Dell"
-    var parts = domain.split(".");
-    var companyPart = parts.length >= 2 ? parts[parts.length - 2] : parts[0];
-    if (companyPart && companyPart.length > 1) {
-      return companyPart.charAt(0).toUpperCase() + companyPart.slice(1);
+  var displayName = nameMatch ? nameMatch[1].trim() : "";
+
+  if (isATS) {
+    // For ATS senders, the real company is in the display name or subject
+    if (displayName) {
+      // Strip " via [ATS name]" suffixes (e.g. "Scale AI via Greenhouse")
+      var cleaned = _stripJobSuffix(displayName.replace(/\s+via\s+\S.*$/i, "").trim());
+      if (cleaned.length > 1) return cleaned;
+    }
+    // Fallback: extract "at [Company]" from subject line
+    // Allow any word character at the start to support names like eBay, 3M
+    var atMatch = subject.match(/\bat\s+([A-Za-z0-9][A-Za-z0-9 &.,'-]{1,50})(?:\s*[.!?]|\s*[-–|]|\s*$)/);
+    if (atMatch) {
+      var co = atMatch[1].trim().replace(/[.!?,]+$/, "");
+      if (co.length > 1) return co;
+    }
+    // Could not determine real company — skip this email
+    return null;
+  }
+
+  // For non-ATS domains, prefer the display name (handles e.g. Meta via facebook.com)
+  if (displayName) {
+    var name = _stripJobSuffix(displayName);
+    // Reject display names that are purely generic sender labels
+    if (name.length > 1 && !/^(no-?reply|jobs?|hr|careers?|hiring|recruiting|team|talent|noreply)$/i.test(name)) {
+      return name;
     }
   }
 
-  // Try to extract from the display name
-  var nameMatch = from.match(/^"?([^"<]+)"?\s*</);
-  if (nameMatch) {
-    var name = nameMatch[1].trim();
-    // Remove common suffixes
-    name = name.replace(/\s*(careers|recruiting|talent|hr|jobs|hiring|team|no-?reply)\s*/gi, "").trim();
-    if (name.length > 1) return name;
+  // Fall back to extracting company from domain (e.g. "careers.dell.com" → "Dell")
+  var genericDomains = ["gmail.com", "outlook.com", "yahoo.com", "hotmail.com", "icloud.com"];
+  if (genericDomains.indexOf(domain) === -1 && domain) {
+    var parts = domain.split(".");
+    var companyPart = parts.length >= 2 ? parts[parts.length - 2] : parts[0];
+    if (companyPart && companyPart.length > 1 && !/^\d+$/.test(companyPart)) {
+      return companyPart.charAt(0).toUpperCase() + companyPart.slice(1);
+    }
   }
 
   return null;
@@ -286,19 +371,33 @@ function _extractCompanyFromEmail(from, subject) {
 function _extractRoleFromSubject(subject, company) {
   if (!subject) return "";
 
+  var escapedCompany = company.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
   var patterns = [
+    // "applying to/for [Role] at [Company]"
     /applying (?:to|for) (?:the )?(.+?)(?:\s+at\s+|\s+[-–]\s+|\s*$)/i,
-    /application (?:for|received:?\s*)(?:the )?(.+?)(?:\s+at\s+|\s+[-–]\s+|\s*$)/i,
+    // "application for/received [Role] at [Company]"
+    /application (?:for|received:?\s*|submitted\s*(?:for)?\s*)(?:the )?(.+?)(?:\s+at\s+|\s+[-–]\s+|\s*$)/i,
+    // "interest in [Role] at [Company]"
+    /interest in (?:the )?(.+?)(?:\s+at\s+|\s+[-–]\s+|\s*$)/i,
+    // "position: [Role]"
     /position:?\s*(.+?)(?:\s+at\s+|\s+[-–]\s+|\s*$)/i,
+    // "role: [Role]"
     /role:?\s*(.+?)(?:\s+at\s+|\s+[-–]\s+|\s*$)/i,
+    // "[Role] at [Company]" — company must start with an uppercase letter
+    /^(.+?)\s+at\s+[A-Z]/,
   ];
 
   for (var i = 0; i < patterns.length; i++) {
     var match = subject.match(patterns[i]);
     if (match && match[1]) {
       var role = match[1].trim();
-      // Remove company name from role if it's there
-      role = role.replace(new RegExp("\\s*(?:at\\s+)?" + company.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\s*", "gi"), "").trim();
+      // Strip leading separators or prepositions left by the pattern
+      role = role.replace(/^[-–:,]\s*/, "").replace(/^(?:for|to)\s+/i, "").trim();
+      // Remove company name if it crept into the role string
+      role = role.replace(new RegExp("(?:^|\\s)" + escapedCompany + "(?:\\s|$)", "gi"), " ").trim();
+      // Discard unfilled template variables (e.g. [m_legal_entity])
+      if (/\[[^\]]+\]/.test(role)) continue;
       if (role.length > 2 && role.length < 100) return role;
     }
   }
