@@ -51,11 +51,36 @@ function initialSetup() {
   // Apply conditional formatting for status column (col 8)
   _applyConditionalFormatting(sheet);
 
+  // Create Settings sheet
+  _setupSettingsSheet(ss);
+
   // Create time-based triggers
   createTriggers();
 
   Logger.log("initialSetup complete.");
   SpreadsheetApp.getUi().alert("Setup complete! Triggers and formatting have been applied.");
+}
+
+// ---------------------------------------------------------------------------
+// _setupSettingsSheet — create or verify the Settings sheet
+// ---------------------------------------------------------------------------
+function _setupSettingsSheet(ss) {
+  var settingsSheet = ss.getSheetByName("Settings");
+  if (!settingsSheet) {
+    settingsSheet = ss.insertSheet("Settings");
+    settingsSheet.appendRow(["setting_name", "setting_value"]);
+    settingsSheet.appendRow(["gmail_cutoff_date", "2026-01-01"]);
+    settingsSheet.appendRow(["tracking_active", "TRUE"]);
+    settingsSheet.appendRow(["ghosted_days", "30"]);
+
+    // Format header row
+    var headerRange = settingsSheet.getRange(1, 1, 1, 2);
+    headerRange.setFontWeight("bold");
+    headerRange.setBackground("#1a1a2e");
+    headerRange.setFontColor("#ffffff");
+    settingsSheet.setColumnWidth(1, 160);
+    settingsSheet.setColumnWidth(2, 200);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -98,11 +123,17 @@ function createTriggers() {
     .everyHours(12)
     .create();
 
+  // discoverApplicationsFromGmail every 24 hours
+  ScriptApp.newTrigger("discoverApplicationsFromGmail")
+    .timeBased()
+    .everyHours(24)
+    .create();
+
   // detectGhosted every 24 hours
   ScriptApp.newTrigger("detectGhosted")
     .timeBased()
     .everyHours(24)
     .create();
 
-  Logger.log("Triggers created: syncStatusFromGmail (12h), detectGhosted (24h)");
+  Logger.log("Triggers created: syncStatusFromGmail (12h), discoverApplicationsFromGmail (24h), detectGhosted (24h)");
 }

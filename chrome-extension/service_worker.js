@@ -13,71 +13,58 @@ function hostIs(host, domain) {
 // ----------------------------------------------------------
 // 1. URL Detection
 // ----------------------------------------------------------
-function isJobDetailUrl(rawUrl) {
-  let url;
+// Only record when the URL indicates the user is actively on an apply page.
+// Sites that don't have a dedicated /apply URL (LinkedIn, Greenhouse, Amazon,
+// Meta, Microsoft, Adobe) are intentionally excluded — Gmail sync will create
+// those rows from confirmation emails.
+function isApplyPageUrl(rawUrl) {
   try {
-    url = new URL(rawUrl);
-  } catch (_) {
+    const u = new URL(rawUrl);
+    const host = u.hostname.toLowerCase();
+    const path = u.pathname.toLowerCase();
+
+    // Workday: /apply or /autofillWithResume
+    if (hostIs(host, "myworkdayjobs.com") || hostIs(host, "workday.com")) {
+      return path.includes("/apply");
+    }
+
+    // Greenhouse — no separate /apply URL; rely on Gmail sync
+    if (hostIs(host, "greenhouse.io")) return false;
+
+    // Lever: /apply at the end
+    if (hostIs(host, "lever.co")) return path.includes("/apply");
+
+    // LinkedIn Easy Apply happens in a modal — no distinct /apply URL
+    if (hostIs(host, "linkedin.com")) return false;
+
+    // Tesla: /careers/search/job/apply/{id}
+    if (hostIs(host, "tesla.com")) return path.includes("/apply/");
+
+    // Google Careers
+    if (hostIs(host, "google.com") && path.includes("/careers/")) {
+      return path.includes("/apply");
+    }
+
+    // Amazon — apply happens inline; rely on Gmail sync
+    if (hostIs(host, "amazon.jobs")) return false;
+
+    // Meta — apply happens on job_details page; rely on Gmail sync
+    if (hostIs(host, "metacareers.com")) return false;
+
+    // Microsoft — apply happens inline; rely on Gmail sync
+    if (hostIs(host, "microsoft.com") || hostIs(host, "careers.microsoft.com")) return false;
+
+    // Adobe — apply happens inline; rely on Gmail sync
+    if (hostIs(host, "adobe.com") || hostIs(host, "careers.adobe.com")) return false;
+
+    // Stripe: /jobs/listing/{id}/apply
+    if (hostIs(host, "stripe.com")) return path.includes("/apply");
+
+    // Generic: only if URL contains /apply
+    return path.includes("/apply");
+  } catch {
     return false;
   }
-  const host = url.hostname.toLowerCase();
-  const path = url.pathname.toLowerCase();
-
-  // LinkedIn: ONLY /jobs/view/{id}
-  if (hostIs(host, "linkedin.com")) return path.startsWith("/jobs/view/");
-
-  // Workday: ONLY /job/ paths, block apply/auth/home pages
-  if (hostIs(host, "myworkdayjobs.com") || hostIs(host, "workday.com")) {
-    const blocked = ["/login", "/authgwy", "/userhome", "/jobtasks", "/task/", "/home", "/completed/"];
-    if (blocked.some(b => path.includes(b))) return false;
-    return path.includes("/job/");
-  }
-
-  // Greenhouse: must have /jobs/{numeric_id}
-  if (hostIs(host, "greenhouse.io")) return /\/jobs\/\d+/.test(path);
-
-  // Lever: must have UUID job ID
-  if (hostIs(host, "lever.co")) return /\/[a-f0-9-]{36}/.test(url.pathname);
-
-  // Tesla: /careers/search/job/{slug}-{id} but NOT /apply/
-  if (hostIs(host, "tesla.com")) {
-    if (path.includes("/apply/")) return false;
-    return path.includes("/careers/search/job/") && /[-]\d+$/.test(path);
-  }
-
-  // Google Careers: needs UUID
-  if (hostIs(host, "google.com") && path.includes("/careers/")) {
-    return /\/[a-f0-9-]{36}/.test(url.pathname);
-  }
-
-  // Amazon
-  if (hostIs(host, "amazon.jobs")) return /\/jobs\/\d+\//.test(path);
-
-  // Meta
-  if (hostIs(host, "metacareers.com")) return path.includes("/job_details/");
-
-  // Microsoft
-  if (hostIs(host, "microsoft.com") && (path.includes("/careers/job/") || path.includes("/job/"))) return true;
-
-  // Adobe
-  if (hostIs(host, "adobe.com") && path.includes("/job/")) return true;
-
-  // Stripe
-  if (hostIs(host, "stripe.com") && path.includes("/jobs/listing/")) return true;
-
-  // SmartRecruiters
-  if (hostIs(host, "smartrecruiters.com")) return /\/[A-Za-z]+\/\d+/.test(url.pathname);
-
-  // Micron
-  if (hostIs(host, "micron.com") && path.includes("/job/")) return true;
-
-  // Bosch
-  if (hostIs(host, "bosch.com") && path.includes("/job/")) return true;
-
-  // Generic fallback (conservative)
-  if (/\/jobs?\/[\w-]+/.test(path) && !path.endsWith("/jobs") && !path.endsWith("/jobs/")) return true;
-
-  return false;
 }
 
 // ----------------------------------------------------------
@@ -503,12 +490,19 @@ function formatTimestamp(date) {
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (changeInfo.status !== "complete") return;
   const rawUrl = tab.url || "";
-  if (!isJobDetailUrl(rawUrl)) return;
+  if (!isApplyPageUrl(rawUrl)) return;
 
   // Wait for SPA title to settle
   setTimeout(() => {
     chrome.tabs.get(tabId, async (updatedTab) => {
       if (chrome.runtime.lastError) return;
+
+      // Check if tracking is paused
+      const syncData = await new Promise(resolve => {
+        chrome.storage.sync.get("trackingPaused", resolve);
+      });
+      if (syncData.trackingPaused) return;
+
       const pageTitle = updatedTab.title || "";
       const canonicalKey = canonicalJobKey(rawUrl);
 
@@ -529,7 +523,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
         jd_url: rawUrl,
         source,
         resume_version: "UNKNOWN",
-        status: "Viewed",
+        status: "Applied",
         canonical_key: canonicalKey,
       };
 
