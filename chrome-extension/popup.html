@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Job Tracker</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <div class="header">
+    <img src="icons/icon48.png" alt="icon" class="logo" />
+    <h1>Job Tracker</h1>
+    <span id="statusDot" class="dot dot-gray" title="Checking..."></span>
+  </div>
+
+  <div class="stats">
+    <div class="stat-block">
+      <div id="todayCount" class="stat-number">0</div>
+      <div class="stat-label">Today</div>
+    </div>
+  </div>
+
+  <div class="last-job" id="lastJobBlock" style="display:none;">
+    <div class="last-label">Last tracked:</div>
+    <div id="lastJobCompany" class="last-company"></div>
+    <div id="lastJobRole" class="last-role"></div>
+  </div>
+
+  <div id="noUrl" class="warning" style="display:none;">
+    ⚠️ Apps Script URL not configured. <a href="#" id="openSettings">Open Settings</a>
+  </div>
+
+  <div class="actions">
+    <a id="sheetLink" href="#" target="_blank" class="btn btn-primary" style="display:none;">Open Google Sheet</a>
+    <a id="settingsLink" href="#" class="btn btn-secondary">Settings</a>
+  </div>
+</body>
+<script src="popup.js"></script>
+</html>
