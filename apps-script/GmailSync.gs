@@ -196,9 +196,9 @@ function backfillFromGmail() {
 
   // Search Gmail for application confirmation emails — three broad query buckets
   var queries = [
-    'subject:("thank you for applying" OR "application received" OR "application submitted" OR "we received your application" OR "application confirmation")',
-    'subject:("successfully submitted" OR "thanks for applying" OR "your application to" OR "applied to" OR "application for the")',
-    'subject:("thank you for your interest" OR "application has been received" OR "we have received your application")',
+    '("thank you for applying" OR "thank you for your application" OR "application received" OR "application submitted" OR "we received your application" OR "application confirmation")',
+    '("successfully submitted" OR "thanks for applying" OR "your application to" OR "applied to" OR "application for the" OR "your application has been")',
+    '("thank you for your interest" OR "application has been received" OR "we have received your application" OR "you\'re in the mix")',
   ];
 
   var processedMessageIds = {};
