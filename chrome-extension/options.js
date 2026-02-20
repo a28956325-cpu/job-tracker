@@ -1,14 +1,16 @@
 document.addEventListener("DOMContentLoaded", () => {
   const appsScriptUrlInput = document.getElementById("appsScriptUrl");
   const sheetUrlInput = document.getElementById("sheetUrl");
+  const driveFolderNameInput = document.getElementById("driveFolderName");
   const saveBtn = document.getElementById("saveBtn");
   const testBtn = document.getElementById("testBtn");
   const message = document.getElementById("message");
 
   // Load saved values
-  chrome.storage.sync.get(["appsScriptUrl", "sheetUrl"], data => {
+  chrome.storage.sync.get(["appsScriptUrl", "sheetUrl", "driveFolderName"], data => {
     if (data.appsScriptUrl) appsScriptUrlInput.value = data.appsScriptUrl;
     if (data.sheetUrl) sheetUrlInput.value = data.sheetUrl;
+    driveFolderNameInput.value = data.driveFolderName || "Job Tracker Resumes";
   });
 
   function showMessage(text, type) {
@@ -25,7 +27,7 @@ document.addEventListener("DOMContentLoaded", () => {
       showMessage("Please enter a valid Google Apps Script Web App URL (should start with https://script.google.com/macros/s/).", "error");
       return;
     }
-    chrome.storage.sync.set({ appsScriptUrl: url, sheetUrl: sheet }, () => {
+    chrome.storage.sync.set({ appsScriptUrl: url, sheetUrl: sheet, driveFolderName: driveFolderNameInput.value.trim() || "Job Tracker Resumes" }, () => {
       showMessage("Settings saved!", "success");
     });
   });

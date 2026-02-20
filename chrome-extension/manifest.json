@@ -7,10 +7,25 @@
     "tabs",
     "storage",
     "activeTab",
-    "alarms"
+    "alarms",
+    "scripting"
   ],
   "host_permissions": [
     "<all_urls>"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "*://*.myworkdayjobs.com/*",
+        "*://*.workday.com/*",
+        "*://*.greenhouse.io/*",
+        "*://*.lever.co/*",
+        "*://*.smartrecruiters.com/*",
+        "*://*/*apply*"
+      ],
+      "js": ["content_script.js"],
+      "run_at": "document_idle"
+    }
   ],
   "background": {
     "service_worker": "service_worker.js"
