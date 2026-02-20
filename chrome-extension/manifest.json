@@ -7,7 +7,8 @@
     "tabs",
     "storage",
     "activeTab",
-    "alarms"
+    "alarms",
+    "scripting"
   ],
   "host_permissions": [
     "<all_urls>"
@@ -15,6 +16,27 @@
   "background": {
     "service_worker": "service_worker.js"
   },
+  "content_scripts": [
+    {
+      "matches": [
+        "*://*.myworkdayjobs.com/*",
+        "*://*.greenhouse.io/*",
+        "*://*.lever.co/*",
+        "*://*.smartrecruiters.com/*",
+        "*://*.icims.com/*",
+        "*://*.taleo.net/*",
+        "*://*.successfactors.com/*",
+        "*://*.jobvite.com/*",
+        "*://*.ashbyhq.com/*",
+        "*://*.rippling.com/*",
+        "*://*.applytojob.com/*",
+        "*://*/*/apply*",
+        "*://*/*apply*"
+      ],
+      "js": ["content_script.js"],
+      "run_at": "document_idle"
+    }
+  ],
   "action": {
     "default_popup": "popup.html",
     "default_icon": {

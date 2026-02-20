@@ -1,14 +1,16 @@
 document.addEventListener("DOMContentLoaded", () => {
   const appsScriptUrlInput = document.getElementById("appsScriptUrl");
   const sheetUrlInput = document.getElementById("sheetUrl");
+  const driveFolderNameInput = document.getElementById("driveFolderName");
   const saveBtn = document.getElementById("saveBtn");
   const testBtn = document.getElementById("testBtn");
   const message = document.getElementById("message");
 
   // Load saved values
-  chrome.storage.sync.get(["appsScriptUrl", "sheetUrl"], data => {
+  chrome.storage.sync.get(["appsScriptUrl", "sheetUrl", "driveFolderName"], data => {
     if (data.appsScriptUrl) appsScriptUrlInput.value = data.appsScriptUrl;
     if (data.sheetUrl) sheetUrlInput.value = data.sheetUrl;
+    if (data.driveFolderName) driveFolderNameInput.value = data.driveFolderName;
   });
 
   function showMessage(text, type) {
@@ -21,11 +23,12 @@ document.addEventListener("DOMContentLoaded", () => {
   saveBtn.addEventListener("click", () => {
     const url = appsScriptUrlInput.value.trim();
     const sheet = sheetUrlInput.value.trim();
+    const folderName = driveFolderNameInput.value.trim();
     if (url && !url.startsWith("https://script.google.com/macros/s/")) {
       showMessage("Please enter a valid Google Apps Script Web App URL (should start with https://script.google.com/macros/s/).", "error");
       return;
     }
-    chrome.storage.sync.set({ appsScriptUrl: url, sheetUrl: sheet }, () => {
+    chrome.storage.sync.set({ appsScriptUrl: url, sheetUrl: sheet, driveFolderName: folderName }, () => {
       showMessage("Settings saved!", "success");
     });
   });

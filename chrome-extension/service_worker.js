@@ -382,6 +382,16 @@ async function getAppsScriptUrl() {
   });
 }
 
+async function getDriveFolderName() {
+  return new Promise(resolve => {
+    try {
+      chrome.storage.sync.get("driveFolderName", data => resolve((data && data.driveFolderName) || ""));
+    } catch (_) {
+      resolve("");
+    }
+  });
+}
+
 // ----------------------------------------------------------
 // 8. Error queue helpers
 // ----------------------------------------------------------
@@ -498,7 +508,106 @@ function formatTimestamp(date) {
 }
 
 // ----------------------------------------------------------
-// 12. Tab listener
+// 12. Resume upload helpers
+// ----------------------------------------------------------
+async function getResumeUploadCache() {
+  return new Promise(resolve => {
+    chrome.storage.local.get("resumeUploadCache", data => resolve(data.resumeUploadCache || {}));
+  });
+}
+
+async function saveResumeUploadCache(cache) {
+  return new Promise(resolve => {
+    chrome.storage.local.set({ resumeUploadCache: cache }, resolve);
+  });
+}
+
+/**
+ * Returns true if we already uploaded this file for this canonical key
+ * (prevents re-upload when the user re-selects the same file on the same page).
+ */
+async function isResumeAlreadyUploaded(canonicalKey, fileName) {
+  const cache = await getResumeUploadCache();
+  return cache[canonicalKey] === fileName;
+}
+
+async function markResumeUploaded(canonicalKey, fileName) {
+  const cache = await getResumeUploadCache();
+  cache[canonicalKey] = fileName;
+  await saveResumeUploadCache(cache);
+}
+
+// ----------------------------------------------------------
+// 13. Message listener (from content script)
+// ----------------------------------------------------------
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type !== "RESUME_UPLOADED") return false;
+
+  (async () => {
+    try {
+      const tabUrl = sender.tab && sender.tab.url ? sender.tab.url : "";
+      const canonicalKey = canonicalJobKey(tabUrl);
+      const pageTitle = sender.tab && sender.tab.title ? sender.tab.title : "";
+
+      // Dedupe: skip if same file already uploaded for this job
+      if (await isResumeAlreadyUploaded(canonicalKey, message.fileName)) {
+        sendResponse({ ok: true, skipped: true, reason: "already_uploaded" });
+        return;
+      }
+
+      const company = extractCompanyName(tabUrl, pageTitle);
+      const roleTitle = cleanRoleTitle(pageTitle);
+      const driveFolderName = await getDriveFolderName();
+
+      const payload = {
+        action: "uploadResume",
+        fileName: message.fileName,
+        fileData: message.fileData,
+        mimeType: message.mimeType,
+        company,
+        roleTitle,
+        canonicalKey,
+        jdUrl: tabUrl,
+        driveFolderName,
+      };
+
+      const url = await getAppsScriptUrl();
+      if (!url) {
+        // Queue for later
+        await enqueue(payload);
+        sendResponse({ ok: false, reason: "no_url_queued" });
+        return;
+      }
+
+      const resp = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const result = await resp.json();
+
+      if (result.ok) {
+        await markResumeUploaded(canonicalKey, message.fileName);
+        // Persist last resume info for popup display
+        chrome.storage.local.set({
+          lastResume: { fileName: message.fileName, driveUrl: result.driveUrl || "" },
+        });
+      }
+
+      sendResponse(result);
+    } catch (err) {
+      logError(`Resume upload failed: ${err.message}`, { fileName: message.fileName });
+      sendResponse({ ok: false, error: err.message });
+    }
+  })();
+
+  return true; // Keep message channel open for async response
+});
+
+// ----------------------------------------------------------
+// 14. Tab listener
 // ----------------------------------------------------------
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (changeInfo.status !== "complete") return;
@@ -539,7 +648,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 });
 
 // ----------------------------------------------------------
-// 13. Periodic cleanup (every hour via alarm)
+// 15. Periodic cleanup (every hour via alarm)
 // ----------------------------------------------------------
 chrome.alarms.create("cleanup", { periodInMinutes: 60 });
 chrome.alarms.onAlarm.addListener(async alarm => {

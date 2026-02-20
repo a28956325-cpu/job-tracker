@@ -99,6 +99,22 @@ body {
   text-overflow: ellipsis;
 }
 
+.last-resume {
+  padding: 10px 16px;
+  border-bottom: 1px solid #f0f0f0;
+  background: #f0f7ff;
+}
+
+.drive-link {
+  display: inline-block;
+  font-size: 11px;
+  color: #1a73e8;
+  text-decoration: none;
+  margin-top: 3px;
+}
+
+.drive-link:hover { text-decoration: underline; }
+
 .warning {
   padding: 10px 16px;
   font-size: 12px;

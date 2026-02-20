@@ -35,6 +35,11 @@ function doPost(e) {
   try {
     var data = JSON.parse(e.postData.contents);
 
+    // Route resume upload requests
+    if (data.action === "uploadResume") {
+      return jsonResponse(handleResumeUpload(data));
+    }
+
     // Validate required fields
     if (!data.canonical_key && !data.jd_url) {
       return jsonResponse({ ok: false, error: "Missing canonical_key or jd_url" });

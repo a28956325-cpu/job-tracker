@@ -4,6 +4,9 @@ document.addEventListener("DOMContentLoaded", async () => {
   const lastJobBlock = document.getElementById("lastJobBlock");
   const lastJobCompany = document.getElementById("lastJobCompany");
   const lastJobRole = document.getElementById("lastJobRole");
+  const lastResumeBlock = document.getElementById("lastResumeBlock");
+  const lastResumeFile = document.getElementById("lastResumeFile");
+  const lastResumeDriveLink = document.getElementById("lastResumeDriveLink");
   const noUrl = document.getElementById("noUrl");
   const sheetLink = document.getElementById("sheetLink");
   const settingsLink = document.getElementById("settingsLink");
@@ -11,7 +14,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   // Load stored data
   chrome.storage.sync.get(["appsScriptUrl", "sheetUrl"], syncData => {
-    chrome.storage.local.get(["todayCount", "todayDate", "lastJob"], localData => {
+    chrome.storage.local.get(["todayCount", "todayDate", "lastJob", "lastResume"], localData => {
       const today = new Date().toDateString();
 
       // Connection status
@@ -36,6 +39,16 @@ document.addEventListener("DOMContentLoaded", async () => {
         lastJobBlock.style.display = "";
         lastJobCompany.textContent = localData.lastJob.company || "";
         lastJobRole.textContent = localData.lastJob.role_title || "";
+      }
+
+      // Last resume
+      if (localData.lastResume && localData.lastResume.fileName) {
+        lastResumeBlock.style.display = "";
+        lastResumeFile.textContent = localData.lastResume.fileName;
+        if (localData.lastResume.driveUrl) {
+          lastResumeDriveLink.href = localData.lastResume.driveUrl;
+          lastResumeDriveLink.style.display = "";
+        }
       }
 
       // Sheet link
