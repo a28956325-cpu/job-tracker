@@ -59,7 +59,7 @@ function initialSetup() {
     settingsSheet.appendRow(["gmail_cutoff_date", "2026-01-01"]);
     settingsSheet.appendRow(["tracking_active", "TRUE"]);
     settingsSheet.appendRow(["ghosted_days", "30"]);
-    settingsSheet.appendRow(["gemini_api_key", ""]);
+    settingsSheet.appendRow(["openai_api_key", ""]);
 
     // Format header
     var settingsHeader = settingsSheet.getRange(1, 1, 1, 2);
