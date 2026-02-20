@@ -20,9 +20,22 @@ var COL = {
 };
 
 // ---------------------------------------------------------------------------
-// doGet — test connection endpoint
+// doGet — test connection endpoint + getSettings action
 // ---------------------------------------------------------------------------
 function doGet(e) {
+  if (e && e.parameter && e.parameter.action === "getSettings") {
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var settingsSheet = ss.getSheetByName("Settings");
+    if (!settingsSheet || settingsSheet.getLastRow() < 2) {
+      return jsonResponse({ ok: true, settings: {} });
+    }
+    var data = settingsSheet.getRange(2, 1, settingsSheet.getLastRow() - 1, 2).getValues();
+    var settings = {};
+    for (var i = 0; i < data.length; i++) {
+      if (data[i][0]) settings[String(data[i][0])] = String(data[i][1]);
+    }
+    return jsonResponse({ ok: true, settings: settings });
+  }
   return ContentService
     .createTextOutput(JSON.stringify({ ok: true, message: "Job Tracker Apps Script is running." }))
     .setMimeType(ContentService.MimeType.JSON);
@@ -38,6 +51,26 @@ function doPost(e) {
     // Route resume upload action
     if (data.action === "uploadResume") {
       return jsonResponse(handleResumeUpload(data));
+    }
+
+    // Route saveSettings action
+    if (data.action === "saveSettings") {
+      var ALLOWED_SETTINGS = ["gmail_cutoff_date", "tracking_active", "ghosted_days"];
+      var ssSett = SpreadsheetApp.getActiveSpreadsheet();
+      var settingsSheet = ssSett.getSheetByName("Settings");
+      if (!settingsSheet || settingsSheet.getLastRow() < 2) {
+        return jsonResponse({ ok: false, error: "Settings sheet not found" });
+      }
+      var settingsData = settingsSheet.getRange(2, 1, settingsSheet.getLastRow() - 1, 2).getValues();
+      var updates = 0;
+      for (var s = 0; s < settingsData.length; s++) {
+        var settingName = String(settingsData[s][0]);
+        if (ALLOWED_SETTINGS.indexOf(settingName) !== -1 && data[settingName] !== undefined) {
+          settingsSheet.getRange(s + 2, 2).setValue(String(data[settingName]));
+          updates++;
+        }
+      }
+      return jsonResponse({ ok: true, updated: updates });
     }
 
     // Validate required fields

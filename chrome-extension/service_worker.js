@@ -509,6 +509,11 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   setTimeout(() => {
     chrome.tabs.get(tabId, async (updatedTab) => {
       if (chrome.runtime.lastError) return;
+
+      // Check if tracking is paused
+      const syncData = await new Promise(resolve => chrome.storage.sync.get("trackingPaused", resolve));
+      if (syncData.trackingPaused) return;
+
       const pageTitle = updatedTab.title || "";
       const canonicalKey = canonicalJobKey(rawUrl);
 

@@ -51,6 +51,24 @@ function initialSetup() {
   // Apply conditional formatting for status column (col 8)
   _applyConditionalFormatting(sheet);
 
+  // Create or get the Settings sheet
+  var settingsSheet = ss.getSheetByName("Settings");
+  if (!settingsSheet) {
+    settingsSheet = ss.insertSheet("Settings");
+    settingsSheet.appendRow(["setting_name", "setting_value"]);
+    settingsSheet.appendRow(["gmail_cutoff_date", "2026-01-01"]);
+    settingsSheet.appendRow(["tracking_active", "TRUE"]);
+    settingsSheet.appendRow(["ghosted_days", "30"]);
+
+    // Format header
+    var settingsHeader = settingsSheet.getRange(1, 1, 1, 2);
+    settingsHeader.setFontWeight("bold");
+    settingsHeader.setBackground("#1a1a2e");
+    settingsHeader.setFontColor("#ffffff");
+    settingsSheet.setColumnWidth(1, 200);
+    settingsSheet.setColumnWidth(2, 200);
+  }
+
   // Create time-based triggers
   createTriggers();
 

@@ -8,12 +8,14 @@ document.addEventListener("DOMContentLoaded", async () => {
   const lastResumeFileName = document.getElementById("lastResumeFileName");
   const lastResumeDriveLink = document.getElementById("lastResumeDriveLink");
   const noUrl = document.getElementById("noUrl");
+  const pausedBanner = document.getElementById("pausedBanner");
   const sheetLink = document.getElementById("sheetLink");
   const settingsLink = document.getElementById("settingsLink");
   const openSettings = document.getElementById("openSettings");
+  const openSettingsPaused = document.getElementById("openSettingsPaused");
 
   // Load stored data
-  chrome.storage.sync.get(["appsScriptUrl", "sheetUrl"], syncData => {
+  chrome.storage.sync.get(["appsScriptUrl", "sheetUrl", "trackingPaused"], syncData => {
     chrome.storage.local.get(["todayCount", "todayDate", "lastJob", "lastResume"], localData => {
       const today = new Date().toDateString();
 
@@ -25,6 +27,11 @@ document.addEventListener("DOMContentLoaded", async () => {
         statusDot.className = "dot dot-red";
         statusDot.title = "Not configured";
         noUrl.style.display = "";
+      }
+
+      // Paused banner
+      if (syncData.trackingPaused) {
+        pausedBanner.style.display = "";
       }
 
       // Today count
@@ -67,6 +74,13 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   if (openSettings) {
     openSettings.addEventListener("click", e => {
+      e.preventDefault();
+      chrome.runtime.openOptionsPage();
+    });
+  }
+
+  if (openSettingsPaused) {
+    openSettingsPaused.addEventListener("click", e => {
       e.preventDefault();
       chrome.runtime.openOptionsPage();
     });

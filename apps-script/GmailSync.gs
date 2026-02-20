@@ -8,6 +8,9 @@ var STATUS_PRIORITY = ["Viewed", "Ghosted", "Applied", "Assessment", "Interview"
 // Terminal statuses — do not process further
 var TERMINAL_STATUSES = ["Rejected", "Offer", "Withdrawn"];
 
+// Generic email domains to skip when extracting company from sender address
+var GENERIC_EMAIL_DOMAINS = ["greenhouse.io", "lever.co", "smartrecruiters.com", "myworkdayjobs.com", "gmail.com", "outlook.com", "yahoo.com"];
+
 // ---------------------------------------------------------------------------
 // syncStatusFromGmail — runs every 12 hours via time trigger
 // ---------------------------------------------------------------------------
@@ -151,4 +154,154 @@ function _cleanCompanyName(name) {
 function _formatDate(date) {
   if (!date) return "";
   return (date.getMonth() + 1) + "/" + date.getDate() + "/" + date.getFullYear();
+}
+
+// ---------------------------------------------------------------------------
+// backfillFromGmail — one-time scan of Gmail to discover past applications
+// ---------------------------------------------------------------------------
+function backfillFromGmail() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName("Applications");
+  if (!sheet) return;
+
+  // Get existing companies to avoid duplicates
+  var lastRow = sheet.getLastRow();
+  var existingCompanies = {};
+  if (lastRow >= 2) {
+    var data = sheet.getRange(2, COL.COMPANY, lastRow - 1, 1).getValues();
+    for (var i = 0; i < data.length; i++) {
+      if (data[i][0]) existingCompanies[String(data[i][0]).toLowerCase().trim()] = true;
+    }
+  }
+
+  // Search Gmail for application confirmation emails
+  var queries = [
+    'subject:("thank you for applying" OR "application received" OR "application submitted" OR "we received your application" OR "application confirmation" OR "successfully submitted" OR "thanks for applying" OR "your application" OR "application for")',
+    'subject:("thank you for your interest" OR "we have received" OR "application has been" OR "applied to" OR "position" OR "role")',
+  ];
+
+  var processedMessageIds = {};
+  var addedCount = 0;
+
+  for (var q = 0; q < queries.length; q++) {
+    try {
+      var fullQuery = queries[q] + ' after:2025/12/01';
+      var threads = GmailApp.search(fullQuery, 0, 100);
+
+      for (var t = 0; t < threads.length; t++) {
+        var messages = threads[t].getMessages();
+        var msg = messages[0]; // first message in thread
+
+        // Skip if already processed
+        var msgId = msg.getId();
+        if (processedMessageIds[msgId]) continue;
+        processedMessageIds[msgId] = true;
+
+        var from = msg.getFrom();
+        var subject = msg.getSubject();
+        var date = msg.getDate();
+
+        // Extract company name from sender
+        var company = _extractCompanyFromEmail(from, subject);
+        if (!company) continue;
+
+        // Skip if company already in sheet
+        if (existingCompanies[company.toLowerCase().trim()]) continue;
+
+        // Extract role title from subject if possible
+        var roleTitle = _extractRoleFromSubject(subject, company);
+
+        var status = "Applied";
+
+        // Create the row
+        var appId = "gmail-" + Utilities.getUuid().substring(0, 8);
+        var timestamp = Utilities.formatDate(date, Session.getScriptTimeZone(), "yyyy-MM-dd HH:mm:ss");
+
+        sheet.appendRow([
+          appId,
+          timestamp,
+          company,
+          roleTitle || "Unknown Role",
+          "", // jd_url
+          "Gmail Backfill", // source
+          "", // resume_version
+          status,
+          "Auto-discovered from Gmail on " + Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd"),
+        ]);
+
+        existingCompanies[company.toLowerCase().trim()] = true;
+        addedCount++;
+
+        Utilities.sleep(100);
+      }
+    } catch (err) {
+      Logger.log("Backfill search error: " + err.message);
+    }
+  }
+
+  // Run status sync on the newly added rows to update statuses
+  if (addedCount > 0) {
+    syncStatusFromGmail();
+  }
+
+  SpreadsheetApp.getUi().alert("Backfill complete! Added " + addedCount + " applications from Gmail. Running status sync...");
+}
+
+function _extractCompanyFromEmail(from, subject) {
+  // Try to extract from email address domain
+  var emailMatch = from.match(/<([^>]+)>/);
+  var email = emailMatch ? emailMatch[1] : from;
+  var domain = email.split("@")[1] || "";
+
+  // Skip generic domains
+  var isGeneric = false;
+  for (var i = 0; i < GENERIC_EMAIL_DOMAINS.length; i++) {
+    if (domain.indexOf(GENERIC_EMAIL_DOMAINS[i]) !== -1) {
+      isGeneric = true;
+      break;
+    }
+  }
+
+  if (!isGeneric && domain) {
+    // Extract company from domain: "careers.dell.com" → "dell" → "Dell"
+    var parts = domain.split(".");
+    var companyPart = parts.length >= 2 ? parts[parts.length - 2] : parts[0];
+    if (companyPart && companyPart.length > 1) {
+      return companyPart.charAt(0).toUpperCase() + companyPart.slice(1);
+    }
+  }
+
+  // Try to extract from the display name
+  var nameMatch = from.match(/^"?([^"<]+)"?\s*</);
+  if (nameMatch) {
+    var name = nameMatch[1].trim();
+    // Remove common suffixes
+    name = name.replace(/\s*(careers|recruiting|talent|hr|jobs|hiring|team|no-?reply)\s*/gi, "").trim();
+    if (name.length > 1) return name;
+  }
+
+  return null;
+}
+
+function _extractRoleFromSubject(subject, company) {
+  if (!subject) return "";
+
+  var patterns = [
+    /applying (?:to|for) (?:the )?(.+?)(?:\s+at\s+|\s+[-–]\s+|\s*$)/i,
+    /application (?:for|received:?\s*)(?:the )?(.+?)(?:\s+at\s+|\s+[-–]\s+|\s*$)/i,
+    /position:?\s*(.+?)(?:\s+at\s+|\s+[-–]\s+|\s*$)/i,
+    /role:?\s*(.+?)(?:\s+at\s+|\s+[-–]\s+|\s*$)/i,
+  ];
+
+  for (var i = 0; i < patterns.length; i++) {
+    var match = subject.match(patterns[i]);
+    if (match && match[1]) {
+      var role = match[1].trim();
+      // Remove company name from role if it's there
+      role = role.replace(new RegExp("\\s*(?:at\\s+)?" + company.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\s*", "gi"), "").trim();
+      if (role.length > 2 && role.length < 100) return role;
+    }
+  }
+
+  return "";
 }
