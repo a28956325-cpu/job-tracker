@@ -539,7 +539,81 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 });
 
 // ----------------------------------------------------------
-// 13. Periodic cleanup (every hour via alarm)
+// 13. Resume upload message handler
+// ----------------------------------------------------------
+const RESUME_DEDUPE_KEY = "uploadedResumes";
+
+async function isResumeDuplicate(dedupeKey) {
+  return new Promise(resolve => {
+    chrome.storage.local.get(RESUME_DEDUPE_KEY, data => {
+      const map = data[RESUME_DEDUPE_KEY] || {};
+      resolve(!!map[dedupeKey]);
+    });
+  });
+}
+
+async function markResumeUploaded(dedupeKey) {
+  return new Promise(resolve => {
+    chrome.storage.local.get(RESUME_DEDUPE_KEY, data => {
+      const map = data[RESUME_DEDUPE_KEY] || {};
+      map[dedupeKey] = Date.now();
+      chrome.storage.local.set({ [RESUME_DEDUPE_KEY]: map }, resolve);
+    });
+  });
+}
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type !== "RESUME_UPLOADED") return false;
+  const { fileName, fileData, mimeType, fileSize } = message;
+  const tabUrl = sender.tab && sender.tab.url ? sender.tab.url : "";
+  const pageTitle = sender.tab && sender.tab.title ? sender.tab.title : "";
+  const canonicalKey = canonicalJobKey(tabUrl);
+  const dedupeKey = `${canonicalKey}|${fileName}`;
+
+  (async () => {
+    if (await isResumeDuplicate(dedupeKey)) return;
+    await markResumeUploaded(dedupeKey);
+
+    const company = extractCompanyName(tabUrl, pageTitle);
+    const roleTitle = cleanRoleTitle(pageTitle);
+    const url = await getAppsScriptUrl();
+    if (!url) return;
+
+    chrome.storage.sync.get("driveFolderName", syncData => {
+      const driveFolderName = syncData.driveFolderName || "Job Tracker Resumes";
+      const payload = {
+        action: "uploadResume",
+        fileName,
+        fileData,
+        mimeType,
+        company,
+        roleTitle,
+        canonicalKey,
+        jdUrl: tabUrl,
+        driveFolderName,
+      };
+      fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      })
+        .then(resp => resp.json())
+        .then(result => {
+          if (result && result.ok) {
+            chrome.storage.local.set({
+              lastResume: { fileName, driveUrl: result.driveUrl || "" },
+            });
+          }
+        })
+        .catch(() => {});
+    });
+  })();
+
+  return false;
+});
+
+// ----------------------------------------------------------
+// 14. Periodic cleanup (every hour via alarm)
 // ----------------------------------------------------------
 chrome.alarms.create("cleanup", { periodInMinutes: 60 });
 chrome.alarms.onAlarm.addListener(async alarm => {
